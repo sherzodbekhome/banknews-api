@@ -1,119 +1,105 @@
 from http.server import BaseHTTPRequestHandler
-import json, urllib.request, time
+import json, urllib.request, time, os
 
-CORS = {
-    'Access-Control-Allow-Origin': '*',
-    'Access-Control-Allow-Methods': 'GET, OPTIONS',
-    'Content-Type': 'application/json',
-}
+CORS = {'Access-Control-Allow-Origin':'*','Access-Control-Allow-Methods':'GET,OPTIONS','Content-Type':'application/json'}
 
 _cache = {}
 
-# bank.uz dagi 24 ta bank — sotib olish/sotish marjalari
-# (CBU kursiga nisbatan koeffitsiyent)
-# Manba: bank.uz real kuzatuv asosida
-BANKS = [
-    # name,               USD_buy, USD_sell, EUR_buy, EUR_sell, RUB_buy, RUB_sell
-    ("Anorbank",           0.9990,  1.0008,   0.9990,  1.0008,  0.9985,  1.0015),
-    ("BRB Bank",           0.9988,  1.0010,   0.9988,  1.0010,  0.9983,  1.0017),
-    ("Alliance Mobile",    0.9986,  1.0012,   0.9986,  1.0012,  0.9982,  1.0018),
-    ("Zoomrad",            0.9985,  1.0013,   0.9985,  1.0013,  0.9980,  1.0020),
-    ("SQB Mobile",         0.9992,  1.0006,   0.9992,  1.0006,  0.9988,  1.0010),
-    ("Kapitalbank",        0.9980,  1.0015,   0.9980,  1.0015,  0.9975,  1.0022),
-    ("Hamkorbank",         0.9978,  1.0018,   0.9978,  1.0018,  0.9973,  1.0024),
-    ("TBC Bank",           0.9982,  1.0014,   0.9982,  1.0014,  0.9977,  1.0020),
-    ("Uzum Bank",          0.9994,  1.0004,   0.9994,  1.0004,  0.9990,  1.0008),
-    ("Click Up (Davr)",    0.9984,  1.0012,   0.9984,  1.0012,  0.9979,  1.0018),
-    ("Ipak Yo'li",         0.9925,  0.9955,   0.9925,  0.9955,  0.9920,  0.9960),
-    ("Ipoteka Bank",       0.9915,  0.9948,   0.9915,  0.9948,  0.9910,  0.9950),
-    ("NBU",                0.9908,  0.9945,   0.9908,  0.9945,  0.9905,  0.9948),
-    ("Aloqabank",          0.9898,  0.9938,   0.9898,  0.9938,  0.9895,  0.9940),
-    ("Asia Alliance Bank", 0.9888,  0.9928,   0.9888,  0.9928,  0.9885,  0.9930),
-    ("Savdogarbank",       0.9880,  0.9920,   0.9880,  0.9920,  0.9878,  0.9922),
-    ("Turonbank",          0.9878,  0.9918,   0.9878,  0.9918,  0.9875,  0.9920),
-    ("Xalq Bank",          0.9872,  0.9912,   0.9872,  0.9912,  0.9870,  0.9915),
-    ("Agrobank",           0.9868,  0.9908,   0.9868,  0.9908,  0.9865,  0.9910),
-    ("Qishloq Qurilish",   0.9862,  0.9902,   0.9862,  0.9902,  0.9860,  0.9905),
-    ("InfinBank",          0.9975,  1.0020,   0.9975,  1.0020,  0.9970,  1.0025),
-    ("Trustbank",          0.9970,  1.0022,   0.9970,  1.0022,  0.9965,  1.0028),
-    ("Davr Bank",          0.9972,  1.0018,   0.9972,  1.0018,  0.9968,  1.0022),
-    ("Mikrokreditbank",    0.9865,  0.9905,   0.9865,  0.9905,  0.9862,  0.9908),
+FALLBACK = [
+    ("Universal Bank",0.999017,1.004782),("O'zsanoatqurilish",0.999017,1.004782),
+    ("MKBank",0.998193,1.004782),("Asakabank",0.998193,1.004782),
+    ("Kapitalbank",0.997781,1.005194),("O'zbekiston Milliy",0.997369,1.003958),
+    ("InfinBank",0.997369,1.003135),("Trastbank",0.997369,1.004782),
+    ("Anorbank",0.997369,1.001487),("Openbank",0.996958,1.002970),
+    ("Asia Alliance Bank",0.996546,1.001487),("Garant Bank",0.996546,1.004782),
+    ("Aloqabank",0.996546,1.003958),("Orient Finans Bank",0.996134,1.004782),
+    ("Ipak Yuli Bank",0.995722,1.003958),("Octobank",0.995722,1.001487),
+    ("Turon Bank",0.995722,1.002311),("Hayot Bank",0.995722,1.004782),
+    ("Agrobank",0.995722,1.003135),("Tenge Bank",0.995722,1.003958),
+    ("Ziraat Bank",0.995722,1.004782),("Ipoteka Bank",0.995310,1.004782),
+    ("KDB Bank Uzbekistan",0.995310,1.005605),("Poytaxt Bank",0.995310,1.004782),
 ]
 
 def get_cbu_rates():
-    """CBU dan USD, EUR, RUB kurslarini olish"""
     try:
-        req = urllib.request.Request(
-            'https://cbu.uz/uz/arkhiv-kursov-valyut/json/',
-            headers={'User-Agent': 'Mozilla/5.0'}
-        )
+        req = urllib.request.Request('https://cbu.uz/uz/arkhiv-kursov-valyut/json/',
+                                     headers={'User-Agent':'Mozilla/5.0'})
         with urllib.request.urlopen(req, timeout=8) as r:
             data = json.loads(r.read().decode())
-        rates = {}
-        for item in data:
-            if item['Ccy'] in ['USD', 'EUR', 'RUB']:
-                rates[item['Ccy']] = float(item['Rate'])
-        return rates
+        return {i['Ccy']:float(i['Rate']) for i in data if i['Ccy'] in ['USD','EUR','RUB']}
     except:
-        return {'USD': 12141.0, 'EUR': 14289.0, 'RUB': 162.0}
+        return {'USD':12141.94,'EUR':14289.85,'RUB':162.63}
 
-def build_bank_rates(cbu_rates):
-    """Barcha 24 bank uchun kurslar"""
-    result = {'USD': [], 'EUR': [], 'RUB': []}
+def load_json_file():
+    """GitHub Actions yangilagan faylni o'qish"""
+    base = os.path.dirname(os.path.abspath(__file__))
+    paths = [
+        os.path.join(base,'..','data','banks_data.json'),
+        'data/banks_data.json',
+        '/var/task/data/banks_data.json',
+    ]
+    for p in paths:
+        try:
+            with open(os.path.normpath(p),'r',encoding='utf-8') as f:
+                d = json.load(f)
+            if d.get('ok') and d.get('data'):
+                return d
+        except:
+            continue
+    return None
 
-    cur_idx = {'USD': (0, 1), 'EUR': (2, 3), 'RUB': (4, 5)}
-
-    for bank in BANKS:
-        name = bank[0]
-        for cur, (bi, si) in cur_idx.items():
-            base = cbu_rates.get(cur, 12000)
-            buy  = round(base * bank[1 + bi])
-            sell = round(base * bank[1 + si])
-            spread = sell - buy
-            result[cur].append({
-                'name':   name,
-                'buy':    buy,
-                'sell':   sell,
-                'spread': spread,
-            })
-
-    # Eng yaxshi kurs (eng yuqori buy) birinchi
-    for cur in result:
-        result[cur].sort(key=lambda x: x['buy'], reverse=True)
-
-    return result
+def calc_fallback(cbu):
+    res = {}
+    for cur in ['USD','EUR','RUB']:
+        base = cbu.get(cur, 12141.94)
+        res[cur] = sorted([{
+            'name':name,'buy':round(base*bk),
+            'sell':round(base*sk),'spread':round(base*(sk-bk))
+        } for name,bk,sk in FALLBACK], key=lambda x:x['buy'], reverse=True)
+    return res
 
 def get_banks():
     cached = _cache.get('banks')
-    if cached and time.time() - cached['ts'] < 1800:
+    if cached and time.time()-cached['ts'] < 1800:
         return cached['data']
 
-    cbu_rates = get_cbu_rates()
-    banks     = build_bank_rates(cbu_rates)
+    cbu = get_cbu_rates()
+    file_data = load_json_file()
+
+    if file_data:
+        stored_usd = file_data.get('cbu_usd', 12141.94)
+        current_usd = cbu.get('USD', stored_usd)
+        ratio = current_usd / stored_usd if stored_usd else 1.0
+
+        if abs(ratio - 1.0) > 0.005:
+            # CBU o'zgardi - qayta hisoblash
+            banks = calc_fallback(cbu)
+            source = f'recalculated (CBU {ratio:.3f}x)'
+        else:
+            banks = file_data['data']
+            source = f"bank.uz ({file_data.get('updated_at','?')[:10]})"
+    else:
+        banks = calc_fallback(cbu)
+        source = 'cbu.uz (calculated)'
 
     result = {
-        'ok':         True,
-        'data':       banks,
-        'source':     'cbu.uz + bank.uz marjalari',
-        'bank_count': len(BANKS),
-        'cbu_rates':  cbu_rates,
-        'ts':         int(time.time()),
+        'ok':True,'data':banks,'source':source,
+        'bank_count':max(len(v) for v in banks.values()),
+        'cbu_usd':cbu.get('USD',12141.94),'ts':int(time.time())
     }
-    _cache['banks'] = {'data': result, 'ts': time.time()}
+    _cache['banks'] = {'data':result,'ts':time.time()}
     return result
 
 class handler(BaseHTTPRequestHandler):
     def do_OPTIONS(self):
         self.send_response(200)
-        [self.send_header(k, v) for k, v in CORS.items()]
+        [self.send_header(k,v) for k,v in CORS.items()]
         self.end_headers()
-
     def do_GET(self):
-        body = json.dumps(get_banks(), ensure_ascii=False).encode()
+        body = json.dumps(get_banks(),ensure_ascii=False).encode()
         self.send_response(200)
-        [self.send_header(k, v) for k, v in CORS.items()]
-        self.send_header('Content-Length', len(body))
+        [self.send_header(k,v) for k,v in CORS.items()]
+        self.send_header('Content-Length',len(body))
         self.end_headers()
         self.wfile.write(body)
-
-    def log_message(self, *a): pass
+    def log_message(self,*a): pass
